@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Omkar's Attendance @ CypherSOL</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="hero">
+      <div class="hero-title">Omkar's Attendance</div>
+      <div class="hero-sub">@ <span class="company">CypherSOL</span></div>
+    </div>
+
+    <div class="auth-area">
+      <button id="loginBtn" class="btn">Login</button>
+      <button id="logoutBtn" class="btn hidden">Logout</button>
+    </div>
+  </header>
+
+  <main class="container centered">
+    <section class="calendar-panel glass">
+      <div class="month-controls">
+        <button id="prevMonth" class="chev">◀</button>
+        <div id="monthLabel" class="month-label">December 2025</div>
+        <button id="nextMonth" class="chev">▶</button>
+      </div>
+
+      <div class="week-header">
+        <div class="wk">Sun</div>
+        <div class="wk">Mon</div>
+        <div class="wk">Tue</div>
+        <div class="wk">Wed</div>
+        <div class="wk">Thu</div>
+        <div class="wk">Fri</div>
+        <div class="wk">Sat</div>
+      </div>
+
+      <div id="calendarGrid" class="grid"></div>
+    </section>
+
+    <aside class="legend-panel">
+      <div class="legend-card glass">
+        <h3>Legend</h3>
+        <div class="legend-row"><span class="chip present"></span> Present</div>
+        <div class="legend-row"><span class="chip exam"></span> Exam Leave</div>
+        <div class="legend-row"><span class="chip leave"></span> Leave</div>
+        <div class="legend-row"><span class="chip sunday"></span> Sunday</div>
+        <p class="hint">Click a date to view. Login to edit.</p>
+      </div>
+    </aside>
+  </main>
+
+  <!-- READ-ONLY INFO (for non-logged viewers) -->
+  <div id="infoOverlay" class="overlay hidden">
+    <div class="info-card glass">
+      <div id="infoDate" class="info-date">2025-12-05</div>
+      <div id="infoStatus" class="info-status">Present</div>
+      <div id="infoReason" class="info-reason">No reason</div>
+      <div style="text-align:right; margin-top:10px;">
+        <button id="closeInfo" class="btn alt">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- EDIT / DETAIL CARD (hidden by default) -->
+  <div id="detailOverlay" class="overlay hidden">
+    <div class="detail-card glass">
+      <div class="detail-top">
+        <div id="detailDate" class="detail-date">2025-12-05</div>
+        <button id="closeDetail" class="icon">✕</button>
+      </div>
+
+      <div class="detail-body">
+        <label class="field">
+          Status
+          <select id="detailStatus">
+            <option value="none">— none —</option>
+            <option value="present">Present</option>
+            <option value="exam">Exam Leave</option>
+            <option value="leave">Leave</option>
+          </select>
+        </label>
+
+        <label class="field">
+          Reason (optional)
+          <input id="detailReason" type="text" placeholder="e.g. End-sem exam / Family outing" />
+        </label>
+
+        <div class="detail-actions">
+          <button id="saveDetail" class="btn">Save</button>
+          <button id="clearDetail" class="btn alt">Clear</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOGIN MODAL -->
+  <div id="loginOverlay" class="overlay hidden">
+    <div class="login-card glass">
+      <h3>Login</h3>
+      <label class="field">
+        Username
+        <input id="loginUser" type="text" value="" />
+      </label>
+      <label class="field">
+        Password
+        <input id="loginPass" type="password" value="" />
+      </label>
+      <div class="detail-actions">
+        <button id="doLogin" class="btn">Sign in</button>
+        <button id="cancelLogin" class="btn alt">Cancel</button>
+      </div>
+      <p class="note">Only you can edit. Change password in server before public deploy.</p>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
