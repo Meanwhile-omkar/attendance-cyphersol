@@ -1,52 +1,42 @@
 from flask import Flask, send_from_directory, jsonify, request, session
-import os, json, threading, datetime
+import os
+import datetime
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 from dotenv import load_dotenv
 
-load_dotenv() 
+load_dotenv()
 
-# ---------- CONFIG ----------
-# Read admin credentials from environment vars (safer for deployment)
+# ================== CONFIG ==================
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")
 SECRET_KEY = os.environ.get("FLASK_SECRET_KEY")
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
-if not ADMIN_USERNAME or not ADMIN_PASSWORD or not SECRET_KEY:
+if not ADMIN_USERNAME or not ADMIN_PASSWORD or not SECRET_KEY or not DATABASE_URL:
     raise RuntimeError(
         "Missing required environment variables. "
-        "Please set ADMIN_USERNAME, ADMIN_PASSWORD and FLASK_SECRET_KEY."
+        "Set ADMIN_USERNAME, ADMIN_PASSWORD, FLASK_SECRET_KEY, DATABASE_URL"
     )
 
-# Hash password once at startup
 PASSWORD_HASH = generate_password_hash(ADMIN_PASSWORD)
 
-ATT_FILE = "attendance.json"
-# ----------------------------
-
+# ================== APP ==================
 app = Flask(__name__, static_folder="static", template_folder="static")
 app.wsgi_app = ProxyFix(app.wsgi_app)
 app.secret_key = SECRET_KEY
 
-file_lock = threading.Lock()
+# ================== DB ==================
+def get_db_connection():
+    return psycopg2.connect(
+        DATABASE_URL,
+        sslmode="require",
+        cursor_factory=RealDictCursor
+    )
 
-def ensure_att_file():
-    if not os.path.exists(ATT_FILE):
-        with file_lock:
-            with open(ATT_FILE, "w", encoding="utf-8") as f:
-                json.dump({}, f, indent=2)
-
-def read_attendance():
-    ensure_att_file()
-    with file_lock:
-        with open(ATT_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-
-def write_attendance(data):
-    with file_lock:
-        with open(ATT_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-
+# ================== STATIC ==================
 @app.route("/", methods=["GET"])
 def index():
     return send_from_directory("static", "index.html")
@@ -55,17 +45,18 @@ def index():
 def static_proxy(filename):
     return send_from_directory("static", filename)
 
-# ---------- AUTH ----------
+# ================== AUTH ==================
 @app.route("/api/login", methods=["POST"])
 def login():
     data = request.get_json() or {}
-    username = data.get("username")
-    password = data.get("password")
-    if username == ADMIN_USERNAME and check_password_hash(PASSWORD_HASH, password):
+    if (
+        data.get("username") == ADMIN_USERNAME
+        and check_password_hash(PASSWORD_HASH, data.get("password", ""))
+    ):
         session.clear()
         session["logged_in"] = True
-        session["username"] = username
-        return jsonify({"ok": True, "username": username})
+        session["username"] = ADMIN_USERNAME
+        return jsonify({"ok": True})
     return jsonify({"ok": False, "message": "invalid credentials"}), 401
 
 @app.route("/api/logout", methods=["POST"])
@@ -75,9 +66,12 @@ def logout():
 
 @app.route("/api/session", methods=["GET"])
 def session_status():
-    return jsonify({"logged_in": bool(session.get("logged_in", False)), "username": session.get("username")})
+    return jsonify({
+        "logged_in": bool(session.get("logged_in")),
+        "username": session.get("username")
+    })
 
-# ---------- CALENDAR API ----------
+# ================== CALENDAR ==================
 @app.route("/api/calendar", methods=["GET"])
 def get_calendar():
     try:
@@ -87,52 +81,98 @@ def get_calendar():
     except Exception:
         return jsonify({"ok": False, "message": "invalid year/month"}), 400
 
-    data = read_attendance()
-    first_day = datetime.date(year, month, 1)
-    if month == 12:
-        next_month = datetime.date(year + 1, 1, 1)
-    else:
-        next_month = datetime.date(year, month + 1, 1)
+    start_date = datetime.date(year, month, 1)
+    end_date = (
+        datetime.date(year + 1, 1, 1)
+        if month == 12
+        else datetime.date(year, month + 1, 1)
+    )
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT date, status, reason
+        FROM attendance
+        WHERE date >= %s AND date < %s
+        """,
+        (start_date, end_date),
+    )
+
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    db_data = {row["date"].isoformat(): row for row in rows}
+
     days = []
-    cur = first_day
-    while cur < next_month:
-        key = cur.isoformat()
+    current = start_date
+    while current < end_date:
+        key = current.isoformat()
         days.append({
             "date": key,
-            "status": data.get(key, {}).get("status", "none"),
-            "reason": data.get(key, {}).get("reason", "")
+            "status": db_data.get(key, {}).get("status", "none"),
+            "reason": db_data.get(key, {}).get("reason", "")
         })
-        cur += datetime.timedelta(days=1)
-    return jsonify({"ok": True, "year": year, "month": month, "days": days})
+        current += datetime.timedelta(days=1)
 
-# Edit attendance - requires login
+    return jsonify({
+        "ok": True,
+        "year": year,
+        "month": month,
+        "days": days
+    })
+
+# ================== ATTENDANCE ==================
 @app.route("/api/attendance", methods=["POST"])
 def post_attendance():
     if not session.get("logged_in"):
         return jsonify({"ok": False, "message": "unauthorized"}), 401
+
     payload = request.get_json() or {}
     date_str = payload.get("date")
-    status = payload.get("status", "none")  # none, present, exam, leave
+    status = payload.get("status", "none")
     reason = payload.get("reason", "") or ""
 
     try:
         datetime.date.fromisoformat(date_str)
     except Exception:
-        return jsonify({"ok": False, "message": "invalid date format"}), 400
+        return jsonify({"ok": False, "message": "invalid date"}), 400
 
     if status not in ("none", "present", "exam", "leave"):
         return jsonify({"ok": False, "message": "invalid status"}), 400
 
-    data = read_attendance()
+    conn = get_db_connection()
+    cur = conn.cursor()
+
     if status == "none":
-        if date_str in data:
-            data.pop(date_str, None)
+        cur.execute("DELETE FROM attendance WHERE date = %s", (date_str,))
     else:
-        data[date_str] = {"status": status, "reason": reason}
+        cur.execute(
+            """
+            INSERT INTO attendance (date, status, reason)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (date)
+            DO UPDATE SET
+                status = EXCLUDED.status,
+                reason = EXCLUDED.reason,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (date_str, status, reason),
+        )
 
-    write_attendance(data)
-    return jsonify({"ok": True, "date": date_str, "status": status, "reason": reason})
+    conn.commit()
+    cur.close()
+    conn.close()
 
+    return jsonify({
+        "ok": True,
+        "date": date_str,
+        "status": status,
+        "reason": reason
+    })
+
+# ================== MAIN ==================
 if __name__ == "__main__":
-    ensure_att_file()
     app.run(host="0.0.0.0", port=5000, debug=True)
